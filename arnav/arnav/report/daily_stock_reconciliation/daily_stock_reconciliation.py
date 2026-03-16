@@ -42,7 +42,7 @@ def get_data(filters):
 
         item_code = item.name
 
-        # Opening
+        # Opening Stock
         opening = frappe.db.sql("""
             SELECT COALESCE(SUM(actual_qty),0)
             FROM `tabStock Ledger Entry`
@@ -74,7 +74,7 @@ def get_data(filters):
         """, (item_code, warehouse, date))[0][0]
 
 
-        # Sold
+        # Sold (Sales Invoice)
         sold = frappe.db.sql("""
             SELECT COALESCE(SUM(sii.qty),0)
             FROM `tabSales Invoice Item` sii
