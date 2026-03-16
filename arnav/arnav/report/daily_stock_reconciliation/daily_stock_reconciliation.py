@@ -71,11 +71,18 @@ def get_data(filters):
 
     data = []
 
+    total_opening = 0
+    total_stock_in = 0
+    total_stock_out = 0
+    total_sold = 0
+    total_sales_return = 0
+    total_closing = 0
+
     for item in items:
 
         item_code = item.name
 
-        # Opening Stock
+        # Opening
         opening = frappe.db.sql("""
             SELECT SUM(actual_qty)
             FROM `tabStock Ledger Entry`
@@ -107,7 +114,7 @@ def get_data(filters):
         """, (item_code, warehouse, date))[0][0] or 0
 
 
-        # SOLD
+        # Sold
         sold = frappe.db.sql("""
             SELECT SUM(sii.qty)
             FROM `tabSales Invoice Item` sii
@@ -120,7 +127,7 @@ def get_data(filters):
         """, (item_code, date))[0][0] or 0
 
 
-        # SALES RETURN
+        # Sales Return
         sales_return = frappe.db.sql("""
             SELECT SUM(sii.qty)
             FROM `tabSales Invoice Item` sii
@@ -137,6 +144,7 @@ def get_data(filters):
 
 
         if opening or stock_in or stock_out or sold or sales_return:
+
             data.append({
                 "item_code": item_code,
                 "opening": opening,
@@ -146,5 +154,25 @@ def get_data(filters):
                 "sales_return": sales_return,
                 "closing": closing
             })
+
+            # Add totals
+            total_opening += opening
+            total_stock_in += stock_in
+            total_stock_out += stock_out
+            total_sold += sold
+            total_sales_return += sales_return
+            total_closing += closing
+
+
+    # Grand Total Row
+    data.append({
+        "item_code": "Grand Total",
+        "opening": total_opening,
+        "stock_in": total_stock_in,
+        "stock_out": total_stock_out,
+        "sold": total_sold,
+        "sales_return": total_sales_return,
+        "closing": total_closing
+    })
 
     return data
