@@ -12,12 +12,10 @@ def execute(filters=None):
 def get_columns():
 
     return [
-        {"label": "Item", "fieldname": "item_code", "fieldtype": "Link", "options": "Item", "width": 240},
+        {"label": "Item", "fieldname": "item_code", "fieldtype": "Link", "options": "Item", "width": 250},
         {"label": "Opening", "fieldname": "opening", "fieldtype": "Float", "width": 120},
         {"label": "Stock In", "fieldname": "stock_in", "fieldtype": "Float", "width": 120},
         {"label": "Stock Out", "fieldname": "stock_out", "fieldtype": "Float", "width": 120},
-        {"label": "Sold", "fieldname": "sold", "fieldtype": "Float", "width": 120},
-        {"label": "Sales Return", "fieldname": "sales_return", "fieldtype": "Float", "width": 130},
         {"label": "Closing", "fieldname": "closing", "fieldtype": "Float", "width": 120}
     ]
 
@@ -34,15 +32,13 @@ def get_data(filters):
     total_opening = 0
     total_stock_in = 0
     total_stock_out = 0
-    total_sold = 0
-    total_sales_return = 0
     total_closing = 0
 
     for item in items:
 
         item_code = item.name
 
-        # Opening Stock
+        # Opening Balance
         opening = frappe.db.sql("""
             SELECT COALESCE(SUM(actual_qty),0)
             FROM `tabStock Ledger Entry`
@@ -74,54 +70,23 @@ def get_data(filters):
         """, (item_code, warehouse, date))[0][0]
 
 
-        # Sold (Sales Invoice)
-        sold = frappe.db.sql("""
-            SELECT COALESCE(SUM(sii.qty),0)
-            FROM `tabSales Invoice Item` sii
-            INNER JOIN `tabSales Invoice` si
-            ON sii.parent = si.name
-            WHERE sii.item_code=%s
-            AND sii.warehouse=%s
-            AND si.posting_date=%s
-            AND si.docstatus=1
-            AND si.is_return=0
-        """, (item_code, warehouse, date))[0][0]
+        closing = opening + stock_in - stock_out
 
 
-        # Sales Return
-        sales_return = frappe.db.sql("""
-            SELECT COALESCE(SUM(sii.qty),0)
-            FROM `tabSales Invoice Item` sii
-            INNER JOIN `tabSales Invoice` si
-            ON sii.parent = si.name
-            WHERE sii.item_code=%s
-            AND sii.warehouse=%s
-            AND si.posting_date=%s
-            AND si.docstatus=1
-            AND si.is_return=1
-        """, (item_code, warehouse, date))[0][0]
-
-
-        closing = opening + stock_in - stock_out - sold + sales_return
-
-
-        if opening or stock_in or stock_out or sold or sales_return:
+        if opening or stock_in or stock_out:
 
             data.append({
                 "item_code": item_code,
                 "opening": opening,
                 "stock_in": stock_in,
                 "stock_out": stock_out,
-                "sold": sold,
-                "sales_return": sales_return,
                 "closing": closing
             })
+
 
             total_opening += opening
             total_stock_in += stock_in
             total_stock_out += stock_out
-            total_sold += sold
-            total_sales_return += sales_return
             total_closing += closing
 
 
@@ -131,8 +96,6 @@ def get_data(filters):
         "opening": total_opening,
         "stock_in": total_stock_in,
         "stock_out": total_stock_out,
-        "sold": total_sold,
-        "sales_return": total_sales_return,
         "closing": total_closing
     })
 
