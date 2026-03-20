@@ -12,150 +12,130 @@ def execute(filters=None):
 def get_columns():
 
     return [
-
-        {"label": "Month", "fieldname": "month", "fieldtype": "Data", "width": 110},
-
-        {"label": "Item Group", "fieldname": "item_group", "fieldtype": "Data", "width": 140},
-
-        {"label": "Item", "fieldname": "item_code", "fieldtype": "Link", "options": "Item", "width": 200},
-
-        {"label": "Warehouse", "fieldname": "warehouse", "fieldtype": "Link", "options": "Warehouse", "width": 160},
-
+        {"label": "Item", "fieldname": "item_code", "fieldtype": "Link", "options": "Item", "width": 240},
         {"label": "Opening", "fieldname": "opening", "fieldtype": "Float", "width": 120},
-
         {"label": "Stock In", "fieldname": "stock_in", "fieldtype": "Float", "width": 120},
-
         {"label": "Stock Out", "fieldname": "stock_out", "fieldtype": "Float", "width": 120},
-
-        {"label": "Sales Return", "fieldname": "sales_return", "fieldtype": "Float", "width": 120},
-
-        {"label": "Repair", "fieldname": "repair", "fieldtype": "Float", "width": 120},
-
-        {"label": "Advance", "fieldname": "advance", "fieldtype": "Float", "width": 120},
-
-        {"label": "Closing", "fieldname": "closing", "fieldtype": "Float", "width": 120},
-
+        {"label": "Sold", "fieldname": "sold", "fieldtype": "Float", "width": 120},
+        {"label": "Sales Return", "fieldname": "sales_return", "fieldtype": "Float", "width": 140},
+        {"label": "Closing", "fieldname": "closing", "fieldtype": "Float", "width": 120}
     ]
 
 
 def get_data(filters):
 
-    conditions = ""
+    date = filters.get("date")
+    warehouse = filters.get("warehouse")
 
-    if filters.get("warehouse"):
-        conditions += " AND sle.warehouse = %(warehouse)s "
+    items = frappe.get_all("Item", filters={"disabled": 0}, fields=["name"])
 
-    if filters.get("item_code"):
-        conditions += " AND sle.item_code = %(item_code)s "
+    data = []
 
-    if filters.get("item_group"):
-        conditions += " AND item.item_group = %(item_group)s "
+    total_open = 0
+    total_in = 0
+    total_out = 0
+    total_sold = 0
+    total_return = 0
+    total_close = 0
 
-    data = frappe.db.sql(f"""
+    for item in items:
 
-        SELECT
+        item_code = item.name
 
-            DATE_FORMAT(sle.posting_date,'%%Y-%%m') as month,
-
-            item.item_group,
-
-            sle.item_code,
-
-            sle.warehouse,
-
-            SUM(CASE
-                WHEN sle.posting_date < %(from_date)s
-                THEN sle.actual_qty
-                ELSE 0
-            END) as opening,
-
-            SUM(CASE
-                WHEN sle.posting_date BETWEEN %(from_date)s AND %(to_date)s
-                AND sle.actual_qty > 0
-                THEN sle.actual_qty
-                ELSE 0
-            END) as stock_in,
-
-            SUM(CASE
-                WHEN sle.posting_date BETWEEN %(from_date)s AND %(to_date)s
-                AND sle.actual_qty < 0
-                THEN ABS(sle.actual_qty)
-                ELSE 0
-            END) as stock_out,
-
-            SUM(CASE
-                WHEN sle.voucher_type = 'Sales Invoice'
-                AND sle.actual_qty > 0
-                AND sle.posting_date BETWEEN %(from_date)s AND %(to_date)s
-                THEN sle.actual_qty
-                ELSE 0
-            END) as sales_return
-
-        FROM `tabStock Ledger Entry` sle
-
-        LEFT JOIN `tabItem` item
-        ON item.name = sle.item_code
-
-        WHERE sle.posting_date <= %(to_date)s
-        {conditions}
-
-        GROUP BY
-            sle.item_code,
-            sle.warehouse,
-            month
-
-        ORDER BY
-            item.item_group,
-            sle.item_code
-
-    """, filters, as_dict=True)
+        # Opening
+        opening = frappe.db.sql("""
+            SELECT COALESCE(SUM(actual_qty),0)
+            FROM `tabStock Ledger Entry`
+            WHERE item_code=%s
+            AND warehouse=%s
+            AND posting_date < %s
+        """, (item_code, warehouse, date))[0][0]
 
 
-    result = []
-
-    total_open = total_in = total_out = total_return = total_close = 0
-
-
-    for row in data:
-
-        closing = row.opening + row.stock_in - row.stock_out
-
-        result.append({
-
-            "month": row.month,
-            "item_group": row.item_group,
-            "item_code": row.item_code,
-            "warehouse": row.warehouse,
-            "opening": row.opening,
-            "stock_in": row.stock_in,
-            "stock_out": row.stock_out,
-            "sales_return": row.sales_return,
-            "repair": 0,
-            "advance": 0,
-            "closing": closing
-
-        })
-
-        total_open += row.opening
-        total_in += row.stock_in
-        total_out += row.stock_out
-        total_return += row.sales_return
-        total_close += closing
+        # Stock In
+        stock_in = frappe.db.sql("""
+            SELECT COALESCE(SUM(actual_qty),0)
+            FROM `tabStock Ledger Entry`
+            WHERE item_code=%s
+            AND warehouse=%s
+            AND posting_date=%s
+            AND actual_qty > 0
+        """, (item_code, warehouse, date))[0][0]
 
 
-    # Grand Total
-    result.append({
+        # Stock Out
+        stock_out = frappe.db.sql("""
+            SELECT COALESCE(SUM(ABS(actual_qty)),0)
+            FROM `tabStock Ledger Entry`
+            WHERE item_code=%s
+            AND warehouse=%s
+            AND posting_date=%s
+            AND actual_qty < 0
+        """, (item_code, warehouse, date))[0][0]
 
+
+        # Sold (using qty NOT weight)
+        sold = frappe.db.sql("""
+            SELECT COALESCE(SUM(sii.qty),0)
+            FROM `tabSales Invoice Item` sii
+            INNER JOIN `tabSales Invoice` si
+                ON sii.parent = si.name
+            WHERE sii.item_code=%s
+            AND sii.warehouse=%s
+            AND si.docstatus=1
+            AND si.is_return=0
+            AND si.posting_date=%s
+        """, (item_code, warehouse, date))[0][0]
+
+
+        # Sales Return
+        sales_return = frappe.db.sql("""
+            SELECT COALESCE(SUM(sii.qty),0)
+            FROM `tabSales Invoice Item` sii
+            INNER JOIN `tabSales Invoice` si
+                ON sii.parent = si.name
+            WHERE sii.item_code=%s
+            AND sii.warehouse=%s
+            AND si.docstatus=1
+            AND si.is_return=1
+            AND si.posting_date=%s
+        """, (item_code, warehouse, date))[0][0]
+
+
+        # Final Closing Formula
+        closing = opening + stock_in - stock_out - sold + sales_return
+
+
+        if opening or stock_in or stock_out or sold or sales_return:
+
+            data.append({
+                "item_code": item_code,
+                "opening": opening,
+                "stock_in": stock_in,
+                "stock_out": stock_out,
+                "sold": sold,
+                "sales_return": sales_return,
+                "closing": closing
+            })
+
+            total_open += opening
+            total_in += stock_in
+            total_out += stock_out
+            total_sold += sold
+            total_return += sales_return
+            total_close += closing
+
+
+    # Grand Total Row
+    data.append({
         "item_code": "Grand Total",
         "opening": total_open,
         "stock_in": total_in,
         "stock_out": total_out,
+        "sold": total_sold,
         "sales_return": total_return,
-        "repair": 0,
-        "advance": 0,
         "closing": total_close
-
     })
 
 
-    return result
+    return data
