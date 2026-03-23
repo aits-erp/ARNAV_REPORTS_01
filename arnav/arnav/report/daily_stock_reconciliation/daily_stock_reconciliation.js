@@ -14,6 +14,12 @@ frappe.query_reports["Daily Stock Reconciliation"] = {
             fieldtype: "Link",
             options: "Warehouse",
             reqd: 1
+        },
+        {
+            fieldname: "item_group",
+            label: "Item Group",
+            fieldtype: "Link",
+            options: "Item Group"
         }
     ]
 

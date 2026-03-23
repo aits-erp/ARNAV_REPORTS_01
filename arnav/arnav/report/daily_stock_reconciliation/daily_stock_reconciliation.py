@@ -8,10 +8,11 @@ def execute(filters=None):
 
     return columns, data
 
-#changes
+
 def get_columns():
 
     return [
+        {"label": "Item Group", "fieldname": "item_group", "fieldtype": "Data", "width": 140},
         {"label": "Item", "fieldname": "item_code", "fieldtype": "Link", "options": "Item", "width": 240},
         {"label": "Opening", "fieldname": "opening", "fieldtype": "Float", "width": 120},
         {"label": "Stock In", "fieldname": "stock_in", "fieldtype": "Float", "width": 120},
@@ -24,110 +25,96 @@ def get_columns():
 
 def get_data(filters):
 
-    date = filters.get("date")
-    warehouse = filters.get("warehouse")
+    conditions = ""
 
-    items = frappe.get_all("Item", filters={"disabled": 0}, fields=["name"])
+    if filters.get("warehouse"):
+        conditions += " AND sle.warehouse = %(warehouse)s "
 
-    data = []
+    if filters.get("item_group"):
+        conditions += " AND item.item_group = %(item_group)s "
 
-    total_open = 0
-    total_in = 0
-    total_out = 0
-    total_sold = 0
-    total_return = 0
-    total_close = 0
+    data = frappe.db.sql(f"""
 
-    for item in items:
+        SELECT
+            item.item_group,
+            sle.item_code,
 
-        item_code = item.name
+            SUM(CASE WHEN sle.posting_date < %(date)s THEN sle.actual_qty ELSE 0 END) as opening,
 
-        # Opening
-        opening = frappe.db.sql("""
-            SELECT COALESCE(SUM(actual_qty),0)
-            FROM `tabStock Ledger Entry`
-            WHERE item_code=%s
-            AND warehouse=%s
-            AND posting_date < %s
-        """, (item_code, warehouse, date))[0][0]
+            SUM(CASE WHEN sle.posting_date = %(date)s AND sle.actual_qty > 0 THEN sle.actual_qty ELSE 0 END) as stock_in,
 
+            SUM(CASE WHEN sle.posting_date = %(date)s AND sle.actual_qty < 0 THEN ABS(sle.actual_qty) ELSE 0 END) as stock_out
 
-        # Stock In
-        stock_in = frappe.db.sql("""
-            SELECT COALESCE(SUM(actual_qty),0)
-            FROM `tabStock Ledger Entry`
-            WHERE item_code=%s
-            AND warehouse=%s
-            AND posting_date=%s
-            AND actual_qty > 0
-        """, (item_code, warehouse, date))[0][0]
+        FROM `tabStock Ledger Entry` sle
+
+        LEFT JOIN `tabItem` item
+        ON item.name = sle.item_code
+
+        WHERE sle.posting_date <= %(date)s
+        {conditions}
+
+        GROUP BY sle.item_code
+
+    """, filters, as_dict=True)
 
 
-        # Stock Out
-        stock_out = frappe.db.sql("""
-            SELECT COALESCE(SUM(ABS(actual_qty)),0)
-            FROM `tabStock Ledger Entry`
-            WHERE item_code=%s
-            AND warehouse=%s
-            AND posting_date=%s
-            AND actual_qty < 0
-        """, (item_code, warehouse, date))[0][0]
+    result = []
 
+    total_open = total_in = total_out = total_sold = total_return = total_close = 0
 
-        # Sold (using qty NOT weight)
+    for row in data:
+
+        # SOLD
         sold = frappe.db.sql("""
             SELECT COALESCE(SUM(sii.qty),0)
             FROM `tabSales Invoice Item` sii
             INNER JOIN `tabSales Invoice` si
-                ON sii.parent = si.name
+            ON sii.parent = si.name
             WHERE sii.item_code=%s
-            AND sii.warehouse=%s
+            AND si.posting_date=%s
             AND si.docstatus=1
             AND si.is_return=0
-            AND si.posting_date=%s
-        """, (item_code, warehouse, date))[0][0]
+        """, (row.item_code, filters.get("date")))[0][0]
 
-
-        # Sales Return
+        # SALES RETURN
         sales_return = frappe.db.sql("""
             SELECT COALESCE(SUM(sii.qty),0)
             FROM `tabSales Invoice Item` sii
             INNER JOIN `tabSales Invoice` si
-                ON sii.parent = si.name
+            ON sii.parent = si.name
             WHERE sii.item_code=%s
-            AND sii.warehouse=%s
+            AND si.posting_date=%s
             AND si.docstatus=1
             AND si.is_return=1
-            AND si.posting_date=%s
-        """, (item_code, warehouse, date))[0][0]
+        """, (row.item_code, filters.get("date")))[0][0]
 
+        # CORRECT CLOSING (NO DOUBLE COUNT)
+        closing = row.opening + row.stock_in - row.stock_out
 
-        # Final Closing Formula
-        closing = opening + stock_in - stock_out - sold + sales_return
+        if row.opening or row.stock_in or row.stock_out:
 
-
-        if opening or stock_in or stock_out or sold or sales_return:
-
-            data.append({
-                "item_code": item_code,
-                "opening": opening,
-                "stock_in": stock_in,
-                "stock_out": stock_out,
+            result.append({
+                "item_group": row.item_group,
+                "item_code": row.item_code,
+                "opening": row.opening,
+                "stock_in": row.stock_in,
+                "stock_out": row.stock_out,
                 "sold": sold,
                 "sales_return": sales_return,
                 "closing": closing
             })
 
-            total_open += opening
-            total_in += stock_in
-            total_out += stock_out
+            total_open += row.opening
+            total_in += row.stock_in
+            total_out += row.stock_out
             total_sold += sold
             total_return += sales_return
             total_close += closing
 
 
-    # Grand Total Row
-    data.append({
+    # ✅ FIXED GRAND TOTAL
+    result.append({
+        "item_group": "",
         "item_code": "Grand Total",
         "opening": total_open,
         "stock_in": total_in,
@@ -137,5 +124,4 @@ def get_data(filters):
         "closing": total_close
     })
 
-
-    return data
+    return result
