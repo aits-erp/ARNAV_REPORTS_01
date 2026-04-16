@@ -1,7 +1,7 @@
 // Copyright (c) 2015, Frappe Technologies Pvt. Ltd. and Contributors
 // License: GNU General Public License v3. See license.txt
 
-frappe.query_reports["tock ageing custom"] = {
+frappe.query_reports["Stock ageing custom"] = {
 	filters: [
 		{
 			fieldname: "company",
