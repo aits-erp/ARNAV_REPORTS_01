@@ -21,7 +21,7 @@ def execute(filters: Filters = None) -> tuple:
     # Check for required filters
     if not filters.get("to_date"):
         frappe.throw(_("Please select 'As On Date' filter"))
-    
+            
     to_date = filters["to_date"]
     
     # Handle range filter
